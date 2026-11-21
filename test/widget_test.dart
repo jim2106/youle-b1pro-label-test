@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:b1pro_test/label_pair.dart';
 import 'package:b1pro_test/label_print_page.dart';
@@ -27,6 +28,7 @@ class FakePrinter extends NiimbotPrint {
   bool online = true;
   bool allowConnect = true;
   final opened = <String?>[];
+  final connectionPayloads = <Map<String, dynamic>>[];
   Uint8List preview = img.encodePng(samplePage());
   final nextPreviews = <Uint8List>[];
   final sentCodes = <List<String>>[];
@@ -65,6 +67,9 @@ class FakePrinter extends NiimbotPrint {
     required NiimbotResultCallback onResult,
   }) async {
     opened.add(model.deviceName);
+    connectionPayloads.add(
+      jsonDecode(jsonEncode(model.toJson())) as Map<String, dynamic>,
+    );
     onResult(allowConnect, '');
   }
 
@@ -115,6 +120,18 @@ void main() {
       bound = 'B1 Pro-A1';
       await Future.wait([session.prepare(atLogin: true), session.prepare()]);
       expect(printer.opened, [bound]);
+      expect(printer.connectionPayloads.single, {
+        'deviceName': bound,
+        'deviceHardwareAddress': '',
+        'connectionState': 0,
+      });
+      final decoder = Platform.environment['YOULE_NATIVE_MODEL_CHECK'];
+      if (decoder != null) {
+        final result = await Process.run(decoder, [
+          jsonEncode(printer.connectionPayloads.single),
+        ]);
+        expect(result.exitCode, 0, reason: result.stderr.toString());
+      }
       current = bound;
       await session.prepare(atLogin: true);
       expect(printer.opened, [bound]);
@@ -126,8 +143,19 @@ void main() {
       await session.prepare();
       expect(printer.opened, [bound, bound]);
       printer.allowConnect = true;
-      await session.open(BlueDeviceInfoModel(deviceName: 'B1 Pro-NEW'));
+      await session.open(
+        BlueDeviceInfoModel(
+          deviceName: 'B1 Pro-NEW',
+          deviceHardwareAddress: 'test-address',
+          connectionState: 1,
+        ),
+      );
       expect(session.connected, 'B1 Pro-NEW');
+      expect(printer.connectionPayloads.last, {
+        'deviceName': 'B1 Pro-NEW',
+        'deviceHardwareAddress': 'test-address',
+        'connectionState': 1,
+      });
       expect(printer.jobs, 0);
     },
   );

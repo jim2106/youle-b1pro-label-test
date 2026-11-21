@@ -26,6 +26,10 @@ jobs:
         run: |
           flutter pub get --enforce-lockfile
           flutter analyze
+          models="${PUB_CACHE:-$HOME/.pub-cache}/hosted/pub.dev/niimbot_print-0.3.2/ios/Classes"
+          export YOULE_NATIVE_MODEL_CHECK="$RUNNER_TEMP/youle-connection-model"
+          xcrun --sdk macosx clang -fobjc-arc -framework Foundation -I"$models" \
+            test/native_connection_model.m "$models/BlueDeviceInfoModel.m" -o "$YOULE_NATIVE_MODEL_CHECK"
           flutter test --no-pub
           flutter build ios --no-pub --release --no-codesign
       - name: Package IPA for personal signing

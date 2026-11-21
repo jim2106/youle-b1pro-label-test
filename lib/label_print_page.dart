@@ -55,7 +55,12 @@ class PrinterSession {
     try {
       await printer
           .onStartConnect(
-            model: device,
+            // Match the iOS scan result. Its Objective-C decoder sends
+            // intValue to connectionState, including on a restored binding.
+            model: device.copyWith(
+              deviceHardwareAddress: device.deviceHardwareAddress ?? '',
+              connectionState: device.connectionState?.toInt() ?? 0,
+            ),
             onResult: (success, message) {
               ok = success;
               reason = message;
