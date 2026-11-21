@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:niimbot_print/niimbot_print.dart';
 import 'label_pair.dart';
+import 'print_preview.dart';
 
 void main() => runApp(const TestApp());
 
@@ -36,6 +38,7 @@ class _TestPageState extends State<TestPage> {
   String status = '装入双排纸，打开 B1 Pro 电源后搜索。';
   bool busy = false, uncertain = false, rotate = false;
   double gap = 0;
+  Uint8List? sdkPreview;
 
   void update(void Function() change) {
     if (mounted) setState(change);
@@ -46,6 +49,7 @@ class _TestPageState extends State<TestPage> {
     update(() {
       busy = true;
       devices = [];
+      sdkPreview = null;
       status = '正在搜索精臣打印机…';
     });
     try {
@@ -129,7 +133,8 @@ class _TestPageState extends State<TestPage> {
     if (busy || uncertain || connected == null) return;
     update(() {
       busy = true;
-      status = '正在准备两张测试标签…';
+      sdkPreview = null;
+      status = '正在检查打印预览中的两个二维码…';
     });
     var submitted = false;
     try {
@@ -141,17 +146,25 @@ class _TestPageState extends State<TestPage> {
         return;
       }
       final pair = LabelPair(gap: gap, rotate: rotate);
-      final elements = await pair.elements();
+      final elements = pair.elements();
+      final layout = pair.layout;
+      final preview = await printer
+          .generatePreview(elements: elements, layout: layout)
+          .timeout(const Duration(seconds: 15));
+      final problem = checkPrintPreview(preview, rotated: rotate);
+      if (!mounted) return;
       update(() {
-        status = '正在发送一组双排标签…';
+        sdkPreview = preview;
+        status = problem == null ? '预览中两个编号正确，正在发送…' : '$problem，已停止送纸。';
       });
+      if (problem != null) return;
       submitted = true;
       bool ok = false;
       String message = '';
       await printer
           .onStartPrint(
             elements: elements,
-            layout: pair.layout,
+            layout: layout,
             onResult: (result, detail) {
               ok = result;
               message = detail;
@@ -179,7 +192,7 @@ class _TestPageState extends State<TestPage> {
   Widget build(BuildContext context) {
     final available = !busy && !uncertain;
     return Scaffold(
-      appBar: AppBar(title: const Text('有乐 · 双排试印')),
+      appBar: AppBar(title: const Text('有乐 · 双排试印 0.1.1')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
@@ -191,18 +204,29 @@ class _TestPageState extends State<TestPage> {
             const SizedBox(height: 8),
             const Text('每个二维码只含下方的六位编号，请保留开头的 0。'),
             const SizedBox(height: 12),
-            for (final code in sampleCodes)
-              Container(
-                margin: const EdgeInsets.only(bottom: 5),
-                height: 91,
-                alignment: Alignment.center,
+            if (sdkPreview != null) ...[
+              const Text('本次打印预览'),
+              ColoredBox(
                 color: Colors.white,
-                child: Image.asset(
-                  'assets/$code.png',
-                  semanticLabel: '测试标签 $code',
+                child: Image.memory(
+                  sdkPreview!,
+                  height: 182,
                   filterQuality: FilterQuality.none,
                 ),
               ),
+            ] else
+              for (final code in sampleCodes)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 5),
+                  height: 91,
+                  alignment: Alignment.center,
+                  color: Colors.white,
+                  child: Image.asset(
+                    'assets/$code.png',
+                    semanticLabel: '测试标签 $code',
+                    filterQuality: FilterQuality.none,
+                  ),
+                ),
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
               title: const Text('纸卷对位设置'),
@@ -220,7 +244,10 @@ class _TestPageState extends State<TestPage> {
                           ),
                       ],
                       onChanged: available
-                          ? (v) => setState(() => gap = v!)
+                          ? (v) => setState(() {
+                              gap = v!;
+                              sdkPreview = null;
+                            })
                           : null,
                     ),
                   ],
@@ -230,7 +257,10 @@ class _TestPageState extends State<TestPage> {
                   value: rotate,
                   title: const Text('整组旋转 90°'),
                   onChanged: available
-                      ? (v) => setState(() => rotate = v)
+                      ? (v) => setState(() {
+                          rotate = v;
+                          sdkPreview = null;
+                        })
                       : null,
                 ),
               ],
