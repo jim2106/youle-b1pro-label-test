@@ -2,12 +2,13 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:b1pro_test/label_pair.dart';
-import 'package:b1pro_test/main.dart';
+import 'package:b1pro_test/label_print_page.dart';
 import 'package:b1pro_test/print_preview.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:niimbot_print/niimbot_print.dart';
+import 'package:zxing2/qrcode.dart' as qr;
 
 img.Image samplePage({String second = '090002'}) {
   img.Image load(String code) => img
@@ -25,6 +26,8 @@ class FakePrinter extends NiimbotPrint {
   int jobs = 0;
   bool online = true;
   Uint8List preview = img.encodePng(samplePage());
+  final nextPreviews = <Uint8List>[];
+  final sentCodes = <List<String>>[];
   List<NiimbotPrintElement>? checkedItems;
   NiimbotLabelLayout? checkedLayout;
 
@@ -35,7 +38,7 @@ class FakePrinter extends NiimbotPrint {
   }) async {
     checkedItems = elements;
     checkedLayout = layout;
-    return preview;
+    return nextPreviews.isEmpty ? preview : nextPreviews.removeAt(0);
   }
 
   @override
@@ -66,6 +69,9 @@ class FakePrinter extends NiimbotPrint {
     required NiimbotResultCallback onResult,
   }) async {
     jobs++;
+    sentCodes.add(
+      elements.whereType<PrintQrCodeModel>().map((q) => q.data).toList(),
+    );
     expect(elements, same(checkedItems));
     expect(layout, same(checkedLayout));
     expect(layout.size.height, 30);
@@ -76,6 +82,73 @@ class FakePrinter extends NiimbotPrint {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('ERP labels preserve the exact code and printed currency', () {
+    final payload = {
+      'version': 1,
+      'items': [
+        {'code': '0017', 'artist': '甲', 'price': '¥1,280.50'},
+        {'code': '0018', 'artist': '乙', 'price': '¥0'},
+      ],
+    };
+    final rows = VesselLabel.parseJob(payload);
+    final items = LabelPair(labels: rows).elements();
+    expect(items.whereType<PrintQrCodeModel>().map((q) => q.data), [
+      '0017',
+      '0018',
+    ]);
+    expect(items.whereType<PrintLabelModel>().first.text, '甲');
+    expect(items.whereType<PrintLabelModel>().elementAt(1).text, '¥1,280.50');
+    expect(
+      () => VesselLabel.parseJob({
+        'version': 1,
+        'items': [payload['items'], null],
+      }),
+      throwsFormatException,
+    );
+    final same = {'code': '0017', 'artist': '甲', 'price': '¥0'};
+    expect(
+      () => VesselLabel.parseJob({
+        'version': 1,
+        'items': [same, same],
+      }),
+      throwsFormatException,
+    );
+  });
+
+  test(
+    'odd last label requires an empty second slot and checks the requested code',
+    () {
+      final page = samplePage();
+      const one = [VesselLabel('090001', '测试作家甲', '¥128')];
+      expect(LabelPair(labels: one).elements(), hasLength(4));
+      String? check(img.Image input, {bool rotated = false}) =>
+          checkPrintPreview(
+            img.encodePng(input),
+            rotated: rotated,
+            expected: ['090001'],
+          );
+      expect(check(page), isNotNull);
+      img.fillRect(
+        page,
+        x1: 0,
+        y1: page.height ~/ 2,
+        x2: page.width - 1,
+        y2: page.height - 1,
+        color: img.ColorRgb8(255, 255, 255),
+      );
+      expect(check(page), isNull);
+      expect(check(img.copyRotate(page, angle: 90), rotated: true), isNull);
+      expect(
+        checkPrintPreview(
+          img.encodePng(page),
+          rotated: false,
+          expected: ['0017'],
+        ),
+        isNotNull,
+      );
+    },
+  );
 
   test('each native QR and its three text fields sit in its own row', () {
     const pair = LabelPair(gap: 2);
@@ -150,8 +223,15 @@ void main() {
     final printer = FakePrinter();
     final goodPreview = printer.preview;
     printer.preview = img.encodePng(img.Image(width: 64, height: 64));
-    await tester.pumpWidget(TestApp(printer: printer));
-    final printButton = find.widgetWithText(FilledButton, '打印两张测试标签');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LabelPrintPage(
+          session: PrinterSession(printer: printer),
+          job: PrintJob(sampleLabels),
+        ),
+      ),
+    );
+    final printButton = find.byType(FilledButton);
     expect(tester.widget<FilledButton>(printButton).onPressed, isNull);
     await tester.tap(find.text('搜索打印机'));
     await tester.pumpAndSettle();
@@ -172,10 +252,63 @@ void main() {
     printer.pending.complete();
     await tester.pumpAndSettle();
     expect(find.textContaining('打印机已回报完成'), findsOneWidget);
-    printer.online = false;
-    await tester.tap(printButton);
+    expect(tester.widget<FilledButton>(printButton).onPressed, isNull);
+  });
+
+  testWidgets('resume an odd job at its first unconfirmed code', (
+    tester,
+  ) async {
+    final last = img.Image(width: 240, height: 240);
+    img.fill(last, color: img.ColorRgb8(255, 255, 255));
+    final matrix = qr.Encoder.encode('0017', qr.ErrorCorrectionLevel.m).matrix!;
+    for (var y = 0; y < matrix.height; y++) {
+      for (var x = 0; x < matrix.width; x++) {
+        if (matrix.get(x, y) == 1) {
+          img.fillRect(
+            last,
+            x1: 120 + x * 3,
+            y1: 20 + y * 3,
+            x2: 122 + x * 3,
+            y2: 22 + y * 3,
+            color: img.ColorRgb8(0, 0, 0),
+          );
+        }
+      }
+    }
+    final printer = FakePrinter();
+    printer.pending.complete();
+    printer.nextPreviews.addAll([
+      printer.preview,
+      img.encodePng(img.Image(width: 64, height: 64)),
+      img.encodePng(last),
+    ]);
+    final job = PrintJob([
+      ...sampleLabels,
+      const VesselLabel('0017', '测试', '¥17'),
+    ]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LabelPrintPage(
+          session: PrinterSession(printer: printer)..connected = 'B1',
+          job: job,
+        ),
+      ),
+    );
+    final button = find.byType(FilledButton);
+    await tester.ensureVisible(button);
+    await tester.tap(button);
     await tester.pumpAndSettle();
-    expect(printer.jobs, 1);
-    expect(find.textContaining('蓝牙连接已断开'), findsOneWidget);
+    expect(job.confirmed, 2);
+    expect(printer.sentCodes, [
+      ['090001', '090002'],
+    ]);
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(job.confirmed, 3);
+    expect(printer.sentCodes, [
+      ['090001', '090002'],
+      ['0017'],
+    ]);
   });
 }

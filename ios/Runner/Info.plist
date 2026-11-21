@@ -7,11 +7,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>搜索并连接你的精臣标签机，打印两张测试标签。</string>
+	<string>搜索并连接你的精臣标签机，打印所选器物的标签。</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>连接精臣 B1 Pro 打印测试标签。</string>
+	<string>连接精臣 B1 Pro 打印器物标签。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>为有乐器物扫码并拍摄入库照片。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>选择要在有乐 ERP 登记的器物照片。</string>
 	<key>CFBundleDisplayName</key>
-	<string>有乐试印</string>
+	<string>有乐 ERP</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

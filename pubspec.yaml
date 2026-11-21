@@ -1,7 +1,7 @@
 name: b1pro_test
-description: B1 Pro two-label alignment test for iPhone.
+description: Youle web client with native B1 Pro label printing.
 publish_to: none
-version: 0.1.1+2
+version: 0.2.0+3
 environment:
   sdk: ^3.12.2
   flutter: ">=3.44.0"

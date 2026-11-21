@@ -31,20 +31,20 @@ jobs:
       - name: Package IPA for personal signing
         run: |
           app=build/ios/iphoneos/Runner.app
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app/Info.plist")" = '有乐试印'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app/Info.plist")" = '有乐 ERP'
           test "$(/usr/bin/lipo -archs "$app/Runner")" = arm64
           test -f "$app/Frameworks/App.framework/flutter_assets/assets/090001.png"
           test -f "$app/Frameworks/App.framework/flutter_assets/assets/090002.png"
           mkdir Payload
           ditto "$app" Payload/Runner.app
-          /usr/bin/zip -qry --symlinks Youle-B1Pro-Test.ipa Payload
-          unzip -tq Youle-B1Pro-Test.ipa
-          shasum -a 256 Youle-B1Pro-Test.ipa > Youle-B1Pro-Test.sha256
+          /usr/bin/zip -qry --symlinks Youle-ERP.ipa Payload
+          unzip -tq Youle-ERP.ipa
+          shasum -a 256 Youle-ERP.ipa > Youle-ERP.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: Youle-B1Pro-iPhone
+          name: Youle-ERP-iPhone
           path: |
-            Youle-B1Pro-Test.ipa
-            Youle-B1Pro-Test.sha256
+            Youle-ERP.ipa
+            Youle-ERP.sha256
           if-no-files-found: error
           retention-days: 7

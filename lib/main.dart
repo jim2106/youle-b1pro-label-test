@@ -1,292 +1,63 @@
-import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:niimbot_print/niimbot_print.dart';
+import 'package:flutter/services.dart';
 import 'label_pair.dart';
-import 'print_preview.dart';
+import 'label_print_page.dart';
 
-void main() => runApp(const TestApp());
-
-class TestApp extends StatelessWidget {
-  const TestApp({super.key, this.printer});
-  final NiimbotPrint? printer;
-
-  @override
-  Widget build(BuildContext context) => MaterialApp(
+void main() => runApp(
+  MaterialApp(
+    title: '有乐 ERP',
     debugShowCheckedModeBanner: false,
-    title: '有乐试印',
     theme: ThemeData(
       colorSchemeSeed: const Color(0xff986249),
-      scaffoldBackgroundColor: const Color(0xfffaf7f2),
       useMaterial3: true,
     ),
-    home: TestPage(printer: printer),
-  );
+    home: const ErpHome(),
+  ),
+);
+
+class ErpHome extends StatefulWidget {
+  const ErpHome({super.key});
+  @override
+  State<ErpHome> createState() => _ErpHomeState();
 }
 
-class TestPage extends StatefulWidget {
-  const TestPage({super.key, this.printer});
-  final NiimbotPrint? printer;
-  @override
-  State<TestPage> createState() => _TestPageState();
-}
-
-class _TestPageState extends State<TestPage> {
-  late final printer = widget.printer ?? NiimbotPrint();
-  List<BlueDeviceInfoModel> devices = [];
-  String? connected;
-  String status = '装入双排纸，打开 B1 Pro 电源后搜索。';
-  bool busy = false, uncertain = false, rotate = false;
-  double gap = 0;
-  Uint8List? sdkPreview;
-
-  void update(void Function() change) {
-    if (mounted) setState(change);
-  }
-
-  Future<void> scan() async {
-    if (busy || uncertain) return;
-    update(() {
-      busy = true;
-      devices = [];
-      sdkPreview = null;
-      status = '正在搜索精臣打印机…';
-    });
-    try {
-      if (connected != null) {
-        await printer.onDisconnect().timeout(const Duration(seconds: 8));
-      }
-      update(() {
-        connected = null;
-      });
-      String? failure;
-      final found = await printer
-          .onStartScan(onError: (msg) => failure = msg)
-          .timeout(const Duration(seconds: 30));
-      update(() {
-        devices = found.where((d) => d.deviceName?.isNotEmpty == true).toList();
-        status =
-            failure ??
-            (devices.isEmpty
-                ? '未发现打印机。请核对蓝牙权限和电源，再点搜索。'
-                : '点选你身边的 B1 Pro，名称可能以 B1 开头。');
-      });
-    } catch (e) {
-      update(() {
-        connected = null;
-        status = '搜索未完成：$e';
-      });
-    } finally {
-      update(() {
-        busy = false;
-      });
-    }
-  }
-
-  Future<void> connect(BlueDeviceInfoModel device) async {
-    if (busy || uncertain) return;
-    update(() {
-      busy = true;
-      connected = null;
-      status = '正在连接 ${device.deviceName}…';
-    });
-    try {
-      bool success = false;
-      String message = '';
-      await printer
-          .onStartConnect(
-            model: device,
-            onResult: (ok, msg) {
-              success = ok;
-              message = msg;
-            },
-          )
-          .timeout(const Duration(seconds: 25));
-      update(() {
-        if (success) {
-          connected = device.deviceName;
-          devices = [];
-          status = '已连接 $connected';
-        } else {
-          status = '连接失败：$message';
-        }
-      });
-    } on TimeoutException {
-      // The native request can still finish later. Ignore this instance
-      // instead of letting a late callback select a different printer.
-      update(() {
-        uncertain = true;
-        status = '连接超时，请重新打开测试版后再连接。';
-      });
-    } catch (e) {
-      update(() {
-        status = '连接失败：$e';
-      });
-    } finally {
-      update(() {
-        busy = false;
-      });
-    }
-  }
-
-  Future<void> printPair() async {
-    if (busy || uncertain || connected == null) return;
-    update(() {
-      busy = true;
-      sdkPreview = null;
-      status = '正在检查打印预览中的两个二维码…';
-    });
-    var submitted = false;
-    try {
-      if (!await printer.isConnected().timeout(const Duration(seconds: 8))) {
-        update(() {
-          connected = null;
-          status = '蓝牙连接已断开，请重新搜索。';
-        });
-        return;
-      }
-      final pair = LabelPair(gap: gap, rotate: rotate);
-      final elements = pair.elements();
-      final layout = pair.layout;
-      final preview = await printer
-          .generatePreview(elements: elements, layout: layout)
-          .timeout(const Duration(seconds: 15));
-      final problem = checkPrintPreview(preview, rotated: rotate);
-      if (!mounted) return;
-      update(() {
-        sdkPreview = preview;
-        status = problem == null ? '预览中两个编号正确，正在发送…' : '$problem，已停止送纸。';
-      });
-      if (problem != null) return;
-      submitted = true;
-      bool ok = false;
-      String message = '';
-      await printer
-          .onStartPrint(
-            elements: elements,
-            layout: layout,
-            onResult: (result, detail) {
-              ok = result;
-              message = detail;
-            },
-          )
-          .timeout(const Duration(seconds: 75));
-      update(() {
-        status = ok
-            ? '打印机已回报完成。请核对上下两张的边缘和扫码结果。'
-            : '打印机返回失败：$message。请先检查出纸情况。';
-      });
-    } catch (e) {
-      update(() {
-        uncertain = submitted;
-        status = submitted ? '设备未确认完成。请查看出纸，重新打开测试版后再试。\n$e' : '准备标签失败：$e';
-      });
-    } finally {
-      update(() {
-        busy = false;
-      });
-    }
-  }
+class _ErpHomeState extends State<ErpHome> {
+  final session = PrinterSession();
+  static const channel = MethodChannel('youle/erp');
+  bool printing = false;
 
   @override
-  Widget build(BuildContext context) {
-    final available = !busy && !uncertain;
-    return Scaffold(
-      appBar: AppBar(title: const Text('有乐 · 双排试印 0.1.1')),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-          children: [
-            Text(
-              '30 × 15 毫米 · 上下双排',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            const Text('每个二维码只含下方的六位编号，请保留开头的 0。'),
-            const SizedBox(height: 12),
-            if (sdkPreview != null) ...[
-              const Text('本次打印预览'),
-              ColoredBox(
-                color: Colors.white,
-                child: Image.memory(
-                  sdkPreview!,
-                  height: 182,
-                  filterQuality: FilterQuality.none,
-                ),
-              ),
-            ] else
-              for (final code in sampleCodes)
-                Container(
-                  margin: const EdgeInsets.only(bottom: 5),
-                  height: 91,
-                  alignment: Alignment.center,
-                  color: Colors.white,
-                  child: Image.asset(
-                    'assets/$code.png',
-                    semanticLabel: '测试标签 $code',
-                    filterQuality: FilterQuality.none,
-                  ),
-                ),
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              title: const Text('纸卷对位设置'),
-              children: [
-                Row(
-                  children: [
-                    const Expanded(child: Text('两排标签之间的净间距')),
-                    DropdownButton<double>(
-                      value: gap,
-                      items: [
-                        for (var i = 0; i <= 10; i++)
-                          DropdownMenuItem(
-                            value: i / 2,
-                            child: Text('${i / 2} mm'),
-                          ),
-                      ],
-                      onChanged: available
-                          ? (v) => setState(() {
-                              gap = v!;
-                              sdkPreview = null;
-                            })
-                          : null,
-                    ),
-                  ],
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: rotate,
-                  title: const Text('整组旋转 90°'),
-                  onChanged: available
-                      ? (v) => setState(() {
-                          rotate = v;
-                          sdkPreview = null;
-                        })
-                      : null,
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: available ? scan : null,
-              child: Text(connected == null ? '搜索打印机' : '重新搜索打印机'),
-            ),
-            for (final d in devices)
-              ListTile(
-                title: Text(d.deviceName!),
-                trailing: const Icon(Icons.chevron_right),
-                enabled: available,
-                onTap: available ? () => connect(d) : null,
-              ),
-            const SizedBox(height: 8),
-            FilledButton(
-              onPressed: available && connected != null ? printPair : null,
-              child: const Text('打印两张测试标签'),
-            ),
-            const SizedBox(height: 12),
-            Semantics(liveRegion: true, child: Text(status)),
-          ],
+  void initState() {
+    super.initState();
+    channel.setMethodCallHandler(onRequest);
+  }
+
+  Future<Object?> onRequest(MethodCall call) async {
+    if (call.method != 'printLabels') throw MissingPluginException();
+    if (printing) throw PlatformException(code: 'busy', message: '已有打印任务');
+    final job = PrintJob(VesselLabel.parseJob(call.arguments));
+    printing = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => LabelPrintPage(session: session, job: job),
         ),
-      ),
-    );
+      );
+      return job.summary;
+    } finally {
+      printing = false;
+    }
   }
+
+  @override
+  void dispose() {
+    channel.setMethodCallHandler(null);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+    backgroundColor: Color(0xfff7f5f0),
+    body: SafeArea(child: UiKitView(viewType: 'youle/erp-web')),
+  );
 }
