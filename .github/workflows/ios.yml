@@ -1,0 +1,50 @@
+name: iPhone test build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      COCOAPODS_DISABLE_STATS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Flutter
+        run: |
+          git clone --quiet --depth 1 --branch 3.44.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 6b182d2c7585eba26d4edce0f97630effd256c33
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Verify and build for physical iPhone
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter analyze
+          flutter test --no-pub
+          flutter build ios --no-pub --release --no-codesign
+      - name: Package IPA for personal signing
+        run: |
+          app=build/ios/iphoneos/Runner.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app/Info.plist")" = '有乐试印'
+          test "$(/usr/bin/lipo -archs "$app/Runner")" = arm64
+          test -f "$app/Frameworks/App.framework/flutter_assets/assets/090001.png"
+          test -f "$app/Frameworks/App.framework/flutter_assets/assets/090002.png"
+          mkdir Payload
+          ditto "$app" Payload/Runner.app
+          /usr/bin/zip -qry --symlinks Youle-B1Pro-Test.ipa Payload
+          unzip -tq Youle-B1Pro-Test.ipa
+          shasum -a 256 Youle-B1Pro-Test.ipa > Youle-B1Pro-Test.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Youle-B1Pro-iPhone
+          path: |
+            Youle-B1Pro-Test.ipa
+            Youle-B1Pro-Test.sha256
+          if-no-files-found: error
+          retention-days: 7

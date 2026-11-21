@@ -1,0 +1,22 @@
+name: b1pro_test
+description: B1 Pro two-label alignment test for iPhone.
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: ^3.12.2
+  flutter: ">=3.44.0"
+dependencies:
+  flutter:
+    sdk: flutter
+  niimbot_print: 0.3.2
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+flutter:
+  config:
+    enable-swift-package-manager: false
+  uses-material-design: true
+  assets:
+    - assets/090001.png
+    - assets/090002.png
