@@ -48,6 +48,8 @@ private final class ErpWeb: NSObject, FlutterPlatformView, WKNavigationDelegate,
 
   init(frame: CGRect, messenger: FlutterBinaryMessenger) {
     let config = WKWebViewConfiguration()
+    config.allowsInlineMediaPlayback = true
+    config.mediaTypesRequiringUserActionForPlayback = .audio
     config.websiteDataStore = .default()
     config.userContentController.addScriptMessageHandler(PrintBridge(messenger), contentWorld: .page, name: "youlePrintV1")
     web = WKWebView(frame: frame, configuration: config)
