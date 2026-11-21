@@ -49,8 +49,9 @@ class _TestPageState extends State<TestPage> {
       status = '正在搜索精臣打印机…';
     });
     try {
-      if (connected != null)
+      if (connected != null) {
         await printer.onDisconnect().timeout(const Duration(seconds: 8));
+      }
       update(() {
         connected = null;
       });
