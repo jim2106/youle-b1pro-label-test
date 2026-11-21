@@ -37,7 +37,8 @@ private final class PrintBridge: NSObject, WKScriptMessageHandlerWithReply {
       replyHandler(true, nil)
       return
     }
-    if message.name == "youlePrintV2", let request = message.body as? [String: Any], request["action"] as? String == "settings" {
+    let direct = ["youlePrintV2", "youlePrintV3"].contains(message.name)
+    if direct, let request = message.body as? [String: Any], request["action"] as? String == "settings" {
       channel.invokeMethod("printerSettings", arguments: nil) { _ in replyHandler(true, nil) }
       return
     }
@@ -46,7 +47,6 @@ private final class PrintBridge: NSObject, WKScriptMessageHandlerWithReply {
       replyHandler(nil, "无效的打印请求")
       return
     }
-    let direct = message.name == "youlePrintV2"
     channel.invokeMethod(direct ? "printDirect" : "printLabels", arguments: ["version": 1, "items": rows]) { result in
       if direct, let receipt = result as? [String: Any] { replyHandler(receipt, nil) }
       else if let summary = result as? String { replyHandler(summary, nil) }
@@ -69,6 +69,7 @@ private final class ErpWeb: NSObject, FlutterPlatformView, WKNavigationDelegate,
     config.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "youlePrintV1")
     config.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "youleSessionReady")
     config.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "youlePrintV2")
+    config.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "youlePrintV3")
     web = WKWebView(frame: frame, configuration: config)
     super.init()
     web.navigationDelegate = self

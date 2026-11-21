@@ -88,7 +88,8 @@ class FakePrinter extends NiimbotPrint {
     );
     expect(elements, same(checkedItems));
     expect(layout, same(checkedLayout));
-    expect(layout.size.height, 30);
+    expect(layout.size.width, 30);
+    expect(layout.size.height, sentCodes.last.length == 1 ? 15 : 30);
     await pending.future;
     onResult(true, '');
   }
@@ -212,39 +213,46 @@ void main() {
     );
   });
 
-  test(
-    'odd last label requires an empty second slot and checks the requested code',
-    () {
-      final page = samplePage();
-      const one = [VesselLabel('090001', '测试作家甲', '¥128')];
-      expect(LabelPair(labels: one).elements(), hasLength(4));
-      String? check(img.Image input, {bool rotated = false}) =>
-          checkPrintPreview(
-            img.encodePng(input),
-            rotated: rotated,
-            expected: ['090001'],
-          );
-      expect(check(page), isNotNull);
-      img.fillRect(
-        page,
-        x1: 0,
-        y1: page.height ~/ 2,
-        x2: page.width - 1,
-        y2: page.height - 1,
-        color: img.ColorRgb8(255, 255, 255),
-      );
-      expect(check(page), isNull);
-      expect(check(img.copyRotate(page, angle: 90), rotated: true), isNull);
-      expect(
-        checkPrintPreview(
-          img.encodePng(page),
-          rotated: false,
-          expected: ['0017'],
-        ),
-        isNotNull,
-      );
-    },
-  );
+  test('a single label uses one short page and checks its code', () {
+    final page = samplePage();
+    const one = [VesselLabel('090001', '测试作家甲', '¥128')];
+    const single = LabelPair(labels: one, gap: 3, rotate: true);
+    expect(single.elements(), hasLength(4));
+    expect(single.layout.size.width, 30);
+    expect(single.layout.size.height, 15);
+    expect(single.layout.orientation, NiimbotLabelOrientation.portrait);
+    String? check(img.Image input, {bool rotated = false}) => checkPrintPreview(
+      img.encodePng(input),
+      rotated: rotated,
+      expected: ['090001'],
+    );
+    expect(check(page), isNotNull);
+    img.fillRect(
+      page,
+      x1: 0,
+      y1: page.height ~/ 2,
+      x2: page.width - 1,
+      y2: page.height - 1,
+      color: img.ColorRgb8(255, 255, 255),
+    );
+    expect(check(page), isNotNull);
+    final shortPage = img.copyCrop(
+      page,
+      x: 0,
+      y: 0,
+      width: page.width,
+      height: page.height ~/ 2,
+    );
+    expect(check(shortPage), isNull);
+    expect(
+      checkPrintPreview(
+        img.encodePng(shortPage),
+        rotated: false,
+        expected: ['0017'],
+      ),
+      isNotNull,
+    );
+  });
 
   test('each native QR and its three text fields sit in its own row', () {
     const pair = LabelPair(gap: 2);
@@ -358,7 +366,7 @@ void main() {
   testWidgets('resume an odd job at its first unconfirmed code', (
     tester,
   ) async {
-    final last = img.Image(width: 240, height: 240);
+    final last = img.Image(width: 240, height: 120);
     img.fill(last, color: img.ColorRgb8(255, 255, 255));
     final matrix = qr.Encoder.encode('0017', qr.ErrorCorrectionLevel.m).matrix!;
     for (var y = 0; y < matrix.height; y++) {

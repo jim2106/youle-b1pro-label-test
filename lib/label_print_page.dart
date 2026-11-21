@@ -129,7 +129,7 @@ class PrintJob {
             .timeout(const Duration(seconds: 15));
         final problem = checkPrintPreview(
           preview,
-          rotated: session.rotate,
+          rotated: pair.rotatePair,
           expected: codes,
         );
         onPreview?.call(preview);
@@ -321,7 +321,8 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
                 Text(
                   '编号 ${job.labels.first.code}${job.labels.length == 1 ? "" : " … ${job.labels.last.code}"}',
                 ),
-                if (job.labels.length.isOdd) const Text('最后一组只印一枚，另一枚留白。'),
+                if (job.labels.length.isOdd)
+                  const Text('最后一枚使用 30 × 15 毫米单枚版面。'),
               ],
               if (connected != null) Text('打印机：$connected'),
               if (uncertain) const Text('上次设备状态未确认，请核对出纸并重新打开 App。'),
@@ -365,7 +366,7 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: rotate,
-                    title: const Text('整组旋转 90°'),
+                    title: const Text('双枚版面旋转 90°'),
                     onChanged: available
                         ? (v) => setState(() {
                             rotate = v;

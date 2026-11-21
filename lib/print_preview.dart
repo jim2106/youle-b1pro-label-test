@@ -32,11 +32,15 @@ String? checkPrintPreview(
     page.height,
   );
 
-  String? checkHalves({required bool across}) {
+  final single = expected.length == 1;
+  if (single && (page.width - 2 * page.height).abs() > 2) {
+    return '单枚预览尺寸与 30 × 15 毫米不符';
+  }
+  String? checkSlots({required bool across}) {
     final width = across ? page.width ~/ 2 : page.width;
-    final height = across ? page.height : page.height ~/ 2;
+    final height = across || single ? page.height : page.height ~/ 2;
     final codes = <String?>[];
-    for (var i = 0; i < 2; i++) {
+    for (var i = 0; i < expected.length; i++) {
       final half = source.crop(
         across ? i * (page.width - width) : 0,
         across ? 0 : i * (page.height - height),
@@ -46,11 +50,7 @@ String? checkPrintPreview(
       final dark = half.getMatrix().where((v) => (v & 255) < 128).length;
       final coverage = dark / (width * height);
       if (coverage > 0.55) return '有一枚标签的预览大面积发黑';
-      if (coverage < 0.01) {
-        if (expected.length == 2 || coverage > 0.001) return '有一枚标签的预览接近空白';
-        codes.add(null);
-        continue;
-      }
+      if (coverage < 0.01) return '有一枚标签的预览接近空白';
       try {
         codes.add(
           QRCodeReader().decode(BinaryBitmap(HybridBinarizer(half))).text,
@@ -59,13 +59,14 @@ String? checkPrintPreview(
         return '预览中有二维码无法识别';
       }
     }
-    final second = expected.length == 2 ? expected[1] : null;
+    if (single) return codes.first == expected.first ? null : '预览中的编号与本次标签不符';
+    final second = expected[1];
     final ordered = codes[0] == expected.first && codes[1] == second;
     final reversed = across && codes[0] == second && codes[1] == expected.first;
     return ordered || reversed ? null : '预览中的编号与本次标签不符';
   }
 
   // The SDK may return the logical canvas or the rotated physical page.
-  if (rotated && checkHalves(across: true) == null) return null;
-  return checkHalves(across: false);
+  if (!single && rotated && checkSlots(across: true) == null) return null;
+  return checkSlots(across: false);
 }

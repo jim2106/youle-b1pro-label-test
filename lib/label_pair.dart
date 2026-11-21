@@ -52,13 +52,15 @@ class LabelPair {
   final double gap;
   final bool rotate;
   static const double width = 30, height = 15;
+  bool get rotatePair => labels.length == 2 && rotate;
+  double get feedLength => labels.length == 1 ? height : 2 * height + gap;
 
   NiimbotLabelLayout get layout => NiimbotLabelLayout(
     size: NiimbotLabelSize(
-      width: rotate ? 2 * height + gap : width,
-      height: rotate ? width : 2 * height + gap,
+      width: rotatePair ? feedLength : width,
+      height: rotatePair ? width : feedLength,
     ),
-    orientation: rotate
+    orientation: rotatePair
         ? NiimbotLabelOrientation.landscape
         : NiimbotLabelOrientation.portrait,
     padding: 0,
