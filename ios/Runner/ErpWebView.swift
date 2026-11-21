@@ -28,8 +28,16 @@ private final class PrintBridge: NSObject, WKScriptMessageHandlerWithReply {
     let origin = frame.securityOrigin
     guard frame.isMainFrame, origin.protocol == "https", origin.host == home.host,
           [0, 443].contains(origin.port), isErp(message.webView?.url),
-          ["/", "/index.html"].contains(message.webView?.url?.path ?? ""),
-          let job = message.body as? [String: Any],
+          ["/", "/index.html"].contains(message.webView?.url?.path ?? "") else {
+      replyHandler(nil, "无效的页面")
+      return
+    }
+    if message.name == "youleSessionReady" {
+      channel.invokeMethod("sessionReady", arguments: nil)
+      replyHandler(true, nil)
+      return
+    }
+    guard let job = message.body as? [String: Any],
           job["version"] as? Int == 1, let rows = job["items"] as? [[String: String]], !rows.isEmpty else {
       replyHandler(nil, "无效的打印请求")
       return
@@ -51,7 +59,9 @@ private final class ErpWeb: NSObject, FlutterPlatformView, WKNavigationDelegate,
     config.allowsInlineMediaPlayback = true
     config.mediaTypesRequiringUserActionForPlayback = .audio
     config.websiteDataStore = .default()
-    config.userContentController.addScriptMessageHandler(PrintBridge(messenger), contentWorld: .page, name: "youlePrintV1")
+    let bridge = PrintBridge(messenger)
+    config.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "youlePrintV1")
+    config.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "youleSessionReady")
     web = WKWebView(frame: frame, configuration: config)
     super.init()
     web.navigationDelegate = self

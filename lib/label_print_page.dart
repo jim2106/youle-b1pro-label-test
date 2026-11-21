@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:niimbot_print/niimbot_print.dart';
 import 'label_pair.dart';
 import 'print_preview.dart';
@@ -8,9 +8,70 @@ import 'print_preview.dart';
 class PrinterSession {
   PrinterSession({NiimbotPrint? printer}) : printer = printer ?? NiimbotPrint();
   final NiimbotPrint printer;
+  static const binding = MethodChannel('youle/printer-binding');
+  static bool supported(String? name) =>
+      name != null &&
+      RegExp(r'^B1 Pro-[^\s]+$', caseSensitive: false).hasMatch(name);
   String? connected;
+  String? connectionHint;
+  Future<void>? restoring;
+  bool checkedBinding = false;
   bool uncertain = false, rotate = false;
   double gap = 0;
+
+  Future<void> prepare({bool atLogin = false}) {
+    return restoring ??= _restore(atLogin).whenComplete(() => restoring = null);
+  }
+
+  Future<void> _restore(bool atLogin) async {
+    if (uncertain) return;
+    try {
+      final name = await binding.invokeMethod<String>('boundName');
+      if (!supported(name)) return;
+      if (await binding.invokeMethod<String>('currentName') == name &&
+          await printer.isConnected()) {
+        connected = name;
+        connectionHint = null;
+        return;
+      }
+      connected = null;
+      if (checkedBinding && !atLogin) {
+        connectionHint = '已绑定的打印机未连接，请开机后搜索。';
+        return;
+      }
+      checkedBinding = true;
+      await open(BlueDeviceInfoModel(deviceName: name));
+    } catch (_) {
+      connected = null;
+      connectionHint = '未能连接已绑定的打印机，请开机后搜索。';
+    }
+  }
+
+  Future<void> open(BlueDeviceInfoModel device) async {
+    if (!supported(device.deviceName)) throw StateError('请选择 B1 Pro 打印机');
+    connected = null;
+    bool ok = false;
+    String reason = '';
+    try {
+      await printer
+          .onStartConnect(
+            model: device,
+            onResult: (success, message) {
+              ok = success;
+              reason = message;
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+    } on TimeoutException {
+      // JCAPI closePrinter cancels an outstanding openPrinter request.
+      await binding.invokeMethod<void>('cancelConnection');
+      rethrow;
+    }
+    if (!ok) throw StateError(reason.isEmpty ? '打印机未连接' : reason);
+    connected = device.deviceName;
+    connectionHint = null;
+    checkedBinding = true;
+  }
 }
 
 class PrintJob {
@@ -68,12 +129,12 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
           .onStartScan(onError: (msg) => failure = msg)
           .timeout(const Duration(seconds: 30));
       update(() {
-        devices = found.where((d) => d.deviceName?.isNotEmpty == true).toList();
+        devices = found
+            .where((d) => PrinterSession.supported(d.deviceName))
+            .toList();
         status =
             failure ??
-            (devices.isEmpty
-                ? '未发现打印机。请核对蓝牙权限和电源，再点搜索。'
-                : '点选你身边的 B1 Pro，名称可能以 B1 开头。');
+            (devices.isEmpty ? '未发现打印机。请核对蓝牙权限和电源，再点搜索。' : '请选择要绑定的 B1 Pro。');
       });
     } catch (e) {
       update(() {
@@ -95,32 +156,14 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
       status = '正在连接 ${device.deviceName}…';
     });
     try {
-      bool success = false;
-      String message = '';
-      await printer
-          .onStartConnect(
-            model: device,
-            onResult: (ok, msg) {
-              success = ok;
-              message = msg;
-            },
-          )
-          .timeout(const Duration(seconds: 25));
+      await widget.session.open(device);
       update(() {
-        if (success) {
-          connected = device.deviceName;
-          devices = [];
-          status = '已连接 $connected';
-        } else {
-          status = '连接失败：$message';
-        }
+        devices = [];
+        status = '已连接 $connected';
       });
     } on TimeoutException {
-      // The native request can still finish later. Ignore this instance
-      // instead of letting a late callback select a different printer.
       update(() {
-        uncertain = true;
-        status = '连接超时，请退出并重新打开 App 后再连接。';
+        status = '连接超时，请开机后重新搜索。';
       });
     } catch (e) {
       update(() {
@@ -290,10 +333,11 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
                 ],
               ),
               const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: available ? scan : null,
-                child: Text(connected == null ? '搜索打印机' : '重新搜索打印机'),
-              ),
+              if (connected == null)
+                OutlinedButton(
+                  onPressed: available ? scan : null,
+                  child: const Text('搜索打印机'),
+                ),
               for (final d in devices)
                 ListTile(
                   title: Text(d.deviceName!),
@@ -323,7 +367,12 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
                       : () => setState(() => stopAfterPage = true),
                   child: Text(stopAfterPage ? '正在暂停' : '暂停后续打印'),
                 ),
-              Semantics(liveRegion: true, child: Text(status)),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  status.isEmpty ? widget.session.connectionHint ?? '' : status,
+                ),
+              ),
               if (!busy && (job.confirmed > 0 || uncertain))
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),

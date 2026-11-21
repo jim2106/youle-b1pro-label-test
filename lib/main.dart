@@ -33,11 +33,17 @@ class _ErpHomeState extends State<ErpHome> {
   }
 
   Future<Object?> onRequest(MethodCall call) async {
+    if (call.method == 'sessionReady') {
+      if (!printing) await session.prepare(atLogin: true);
+      return null;
+    }
     if (call.method != 'printLabels') throw MissingPluginException();
     if (printing) throw PlatformException(code: 'busy', message: '已有打印任务');
     final job = PrintJob(VesselLabel.parseJob(call.arguments));
     printing = true;
     try {
+      await session.prepare();
+      if (!mounted) return job.summary;
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
           builder: (_) => LabelPrintPage(session: session, job: job),

@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:b1pro_test/label_pair.dart';
 import 'package:b1pro_test/label_print_page.dart';
 import 'package:b1pro_test/print_preview.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:niimbot_print/niimbot_print.dart';
@@ -25,6 +25,8 @@ class FakePrinter extends NiimbotPrint {
   final pending = Completer<void>();
   int jobs = 0;
   bool online = true;
+  bool allowConnect = true;
+  final opened = <String?>[];
   Uint8List preview = img.encodePng(samplePage());
   final nextPreviews = <Uint8List>[];
   final sentCodes = <List<String>>[];
@@ -48,7 +50,13 @@ class FakePrinter extends NiimbotPrint {
     NiimbotErrorCallback? onError,
   }) async {
     expect(whiteListDevices, isNull);
-    return [BlueDeviceInfoModel(deviceName: 'B1-TEST')];
+    return [
+      'B1-TEST',
+      'B1 Pro-TEST',
+      'B1 Pro-',
+      'Headphones',
+      'B1 Pro Max-TEST',
+    ].map((name) => BlueDeviceInfoModel(deviceName: name)).toList();
   }
 
   @override
@@ -56,7 +64,8 @@ class FakePrinter extends NiimbotPrint {
     required BlueDeviceInfoModel model,
     required NiimbotResultCallback onResult,
   }) async {
-    onResult(true, '');
+    opened.add(model.deviceName);
+    onResult(allowConnect, '');
   }
 
   @override
@@ -82,6 +91,46 @@ class FakePrinter extends NiimbotPrint {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'login restores only the bound printer and an offline printer allows manual recovery',
+    () async {
+      final printer = FakePrinter();
+      final session = PrinterSession(printer: printer);
+      String? bound;
+      String? current;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        PrinterSession.binding,
+        (MethodCall call) async => call.method == 'boundName' ? bound : current,
+      );
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(PrinterSession.binding, null),
+      );
+      await session.prepare(atLogin: true);
+      bound = 'B1-OTHER';
+      await session.prepare(atLogin: true);
+      expect(printer.opened, isEmpty);
+      bound = 'B1 Pro-A1';
+      await Future.wait([session.prepare(atLogin: true), session.prepare()]);
+      expect(printer.opened, [bound]);
+      current = bound;
+      await session.prepare(atLogin: true);
+      expect(printer.opened, [bound]);
+      current = null;
+      printer.allowConnect = false;
+      await session.prepare(atLogin: true);
+      expect(session.connected, isNull);
+      expect(session.connectionHint, isNotNull);
+      await session.prepare();
+      expect(printer.opened, [bound, bound]);
+      printer.allowConnect = true;
+      await session.open(BlueDeviceInfoModel(deviceName: 'B1 Pro-NEW'));
+      expect(session.connected, 'B1 Pro-NEW');
+      expect(printer.jobs, 0);
+    },
+  );
 
   test('ERP labels preserve the exact code and printed currency', () {
     final payload = {
@@ -235,7 +284,11 @@ void main() {
     expect(tester.widget<FilledButton>(printButton).onPressed, isNull);
     await tester.tap(find.text('搜索打印机'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('B1-TEST'));
+    expect(find.text('B1-TEST'), findsNothing);
+    expect(find.text('B1 Pro-'), findsNothing);
+    expect(find.text('Headphones'), findsNothing);
+    expect(find.text('B1 Pro Max-TEST'), findsNothing);
+    await tester.tap(find.text('B1 Pro-TEST'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(printButton);
     await tester.tap(printButton);
