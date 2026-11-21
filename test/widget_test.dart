@@ -96,6 +96,25 @@ class FakePrinter extends NiimbotPrint {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'a connected printer sends from ERP and only disconnection opens the picker',
+    () async {
+      final printer = FakePrinter();
+      printer.pending.complete();
+      final session = PrinterSession(printer: printer)
+        ..connected = 'B1 Pro-TEST';
+      final job = PrintJob(sampleLabels);
+      expect(await job.printOrRequestConnection(session), isFalse);
+      expect(job.confirmed, 2);
+      expect(printer.sentCodes, [sampleCodes]);
+      printer.online = false;
+      expect(
+        await PrintJob(sampleLabels).printOrRequestConnection(session),
+        isTrue,
+      );
+      expect(printer.jobs, 1);
+    },
+  );
 
   test(
     'login restores only the bound printer and an offline printer allows manual recovery',

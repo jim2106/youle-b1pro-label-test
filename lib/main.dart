@@ -37,18 +37,41 @@ class _ErpHomeState extends State<ErpHome> {
       if (!printing) await session.prepare(atLogin: true);
       return null;
     }
-    if (call.method != 'printLabels') throw MissingPluginException();
+    final settingsOnly = call.method == 'printerSettings';
+    final structured = call.method == 'printDirect';
+    if (!settingsOnly && !structured && call.method != 'printLabels') {
+      throw MissingPluginException();
+    }
     if (printing) throw PlatformException(code: 'busy', message: '已有打印任务');
-    final job = PrintJob(VesselLabel.parseJob(call.arguments));
+    final job = PrintJob(
+      settingsOnly ? [] : VesselLabel.parseJob(call.arguments),
+    );
     printing = true;
     try {
       await session.prepare();
-      if (!mounted) return job.summary;
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute(
-          builder: (_) => LabelPrintPage(session: session, job: job),
-        ),
-      );
+      final showPage =
+          settingsOnly || await job.printOrRequestConnection(session);
+      if (mounted && showPage) {
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => LabelPrintPage(
+              session: session,
+              job: job,
+              settingsOnly: settingsOnly,
+            ),
+          ),
+        );
+      }
+      if (session.uncertain && job.detail.isEmpty) {
+        job.detail = '上次出纸结果未确认，请核对实物后重新打开 App。';
+      }
+      if (structured) {
+        return {
+          'confirmed': job.confirmed,
+          'uncertain': job.uncertainSubmission,
+          'detail': job.detail,
+        };
+      }
       return job.summary;
     } finally {
       printing = false;

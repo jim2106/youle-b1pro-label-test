@@ -83,14 +83,105 @@ class PrintJob {
   PrintJob(this.labels);
   final List<VesselLabel> labels;
   int confirmed = 0;
+  bool uncertainSubmission = false;
   String detail = '';
   String get summary => '已确认打印 $confirmed / ${labels.length} 张。$detail';
+
+  Future<bool> printOrRequestConnection(PrinterSession session) async {
+    if (session.connected != null && !session.uncertain) await send(session);
+    return session.connected == null &&
+        !session.uncertain &&
+        confirmed < labels.length;
+  }
+
+  Future<void> send(
+    PrinterSession session, {
+    bool Function()? shouldStop,
+    void Function(Uint8List)? onPreview,
+    void Function(String)? onStatus,
+  }) async {
+    if (session.uncertain) {
+      detail = '上次出纸结果未确认，请核对实物后重新打开 App。';
+      return;
+    }
+    var submitted = false;
+
+    try {
+      while (confirmed < labels.length && !(shouldStop?.call() ?? false)) {
+        if (!await session.printer.isConnected().timeout(
+          const Duration(seconds: 8),
+        )) {
+          session.connected = null;
+          detail = '蓝牙连接已断开，请重新搜索。';
+          break;
+        }
+        final rows = labels.skip(confirmed).take(2).toList();
+        final codes = rows.map((row) => row.code).toList();
+        final pair = LabelPair(
+          gap: session.gap,
+          rotate: session.rotate,
+          labels: rows,
+        );
+        final elements = pair.elements();
+        final layout = pair.layout;
+        final preview = await session.printer
+            .generatePreview(elements: elements, layout: layout)
+            .timeout(const Duration(seconds: 15));
+        final problem = checkPrintPreview(
+          preview,
+          rotated: session.rotate,
+          expected: codes,
+        );
+        onPreview?.call(preview);
+        if (problem != null) {
+          detail = '$problem，已停止送纸。编号 ${codes.join("、")}。';
+          break;
+        }
+        if (shouldStop?.call() ?? false) break;
+        onStatus?.call('正在打印 ${codes.join("、")}');
+        submitted = true;
+        bool ok = false;
+        String message = '';
+        await session.printer
+            .onStartPrint(
+              elements: elements,
+              layout: layout,
+              onResult: (result, detail) {
+                ok = result;
+                message = detail;
+              },
+            )
+            .timeout(const Duration(seconds: 75));
+        if (!ok) throw StateError(message);
+        submitted = false;
+        confirmed += rows.length;
+        detail = '';
+        onStatus?.call(summary);
+      }
+      if ((shouldStop?.call() ?? false) && confirmed < labels.length) {
+        detail = '已暂停。';
+      }
+      if (confirmed == labels.length) detail = '打印机已回报完成。';
+    } catch (e) {
+      uncertainSubmission = submitted;
+      session.uncertain = submitted;
+      detail = submitted
+          ? '编号 ${labels.skip(confirmed).take(2).map((r) => r.code).join("、")} 的出纸结果未确认，请核对实物后再补打。'
+          : '准备标签失败：$e';
+    }
+  }
 }
 
 class LabelPrintPage extends StatefulWidget {
-  const LabelPrintPage({super.key, required this.session, required this.job});
+  const LabelPrintPage({
+    super.key,
+    required this.session,
+    required this.job,
+    this.settingsOnly = false,
+  });
   final PrinterSession session;
   final PrintJob job;
+  final bool settingsOnly;
   @override
   State<LabelPrintPage> createState() => _LabelPrintPageState();
 }
@@ -189,70 +280,14 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
       status = '正在核对本组二维码…';
     });
     final job = widget.job;
-    var submitted = false;
     stopAfterPage = false;
     try {
-      while (job.confirmed < job.labels.length && !stopAfterPage) {
-        if (!await printer.isConnected().timeout(const Duration(seconds: 8))) {
-          connected = null;
-          job.detail = '蓝牙连接已断开，请重新搜索。';
-          break;
-        }
-        final rows = job.labels.skip(job.confirmed).take(2).toList();
-        final codes = rows.map((row) => row.code).toList();
-        final pair = LabelPair(gap: gap, rotate: rotate, labels: rows);
-        final elements = pair.elements();
-        final layout = pair.layout;
-        final preview = await printer
-            .generatePreview(elements: elements, layout: layout)
-            .timeout(const Duration(seconds: 15));
-        if (!mounted) return;
-        final problem = checkPrintPreview(
-          preview,
-          rotated: rotate,
-          expected: codes,
-        );
-        update(() {
-          sdkPreview = preview;
-        });
-        if (problem != null) {
-          job.detail = '$problem，已停止送纸。编号 ${codes.join("、")}。';
-          break;
-        }
-        if (stopAfterPage) break;
-        update(() {
-          status = '正在打印 ${codes.join("、")}';
-        });
-        submitted = true;
-        bool ok = false;
-        String message = '';
-        await printer
-            .onStartPrint(
-              elements: elements,
-              layout: layout,
-              onResult: (result, detail) {
-                ok = result;
-                message = detail;
-              },
-            )
-            .timeout(const Duration(seconds: 75));
-        if (!ok) throw StateError(message);
-        submitted = false;
-        job.confirmed += rows.length;
-        job.detail = '';
-        update(() {
-          status = job.summary;
-        });
-      }
-      if (stopAfterPage && job.confirmed < job.labels.length) {
-        job.detail = '已暂停。';
-      }
-      if (job.confirmed == job.labels.length) job.detail = '打印机已回报完成。';
-    } catch (e) {
-      uncertain = submitted;
-      job.detail = submitted
-          ? '编号 ${job.labels.skip(job.confirmed).take(2).map((r) => r.code).join("、")} 的出纸结果未确认，请核对实物后再补打。'
-          : '准备标签失败：$e';
+      await job.send(
+        widget.session,
+        shouldStop: () => stopAfterPage || !mounted,
+        onPreview: (preview) => update(() => sdkPreview = preview),
+        onStatus: (message) => update(() => status = message),
+      );
     } finally {
       update(() {
         busy = false;
@@ -269,7 +304,7 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
       canPop: !busy,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('B1 Pro 打印贴纸'),
+          title: Text(widget.settingsOnly ? '打印机与对位设置' : 'B1 Pro 打印贴纸'),
           automaticallyImplyLeading: !busy,
         ),
         body: SafeArea(
@@ -281,11 +316,13 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 8),
-              Text('共 ${job.labels.length} 张 · 已确认 ${job.confirmed} 张'),
-              Text(
-                '编号 ${job.labels.first.code}${job.labels.length == 1 ? "" : " … ${job.labels.last.code}"}',
-              ),
-              if (job.labels.length.isOdd) const Text('最后一组只印一枚，另一枚留白。'),
+              if (!widget.settingsOnly) ...[
+                Text('共 ${job.labels.length} 张 · 已确认 ${job.confirmed} 张'),
+                Text(
+                  '编号 ${job.labels.first.code}${job.labels.length == 1 ? "" : " … ${job.labels.last.code}"}',
+                ),
+                if (job.labels.length.isOdd) const Text('最后一组只印一枚，另一枚留白。'),
+              ],
               if (connected != null) Text('打印机：$connected'),
               if (uncertain) const Text('上次设备状态未确认，请核对出纸并重新打开 App。'),
               if (sdkPreview != null) ...[
@@ -300,6 +337,7 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
                 ),
               ],
               ExpansionTile(
+                initiallyExpanded: widget.settingsOnly,
                 tilePadding: EdgeInsets.zero,
                 title: const Text('纸卷对位设置'),
                 children: [
@@ -351,19 +389,20 @@ class _LabelPrintPageState extends State<LabelPrintPage> {
                   onTap: available ? () => connect(d) : null,
                 ),
               const SizedBox(height: 8),
-              FilledButton(
-                onPressed:
-                    available &&
-                        connected != null &&
-                        job.confirmed < job.labels.length
-                    ? printPair
-                    : null,
-                child: Text(
-                  job.confirmed == job.labels.length
-                      ? '打印完成'
-                      : '打印剩余 ${job.labels.length - job.confirmed} 张',
+              if (!widget.settingsOnly)
+                FilledButton(
+                  onPressed:
+                      available &&
+                          connected != null &&
+                          job.confirmed < job.labels.length
+                      ? printPair
+                      : null,
+                  child: Text(
+                    job.confirmed == job.labels.length
+                        ? '打印完成'
+                        : '打印剩余 ${job.labels.length - job.confirmed} 张',
+                  ),
                 ),
-              ),
               const SizedBox(height: 12),
               if (busy && (job.labels.length - job.confirmed > 2))
                 TextButton(
